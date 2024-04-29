@@ -4,6 +4,7 @@ import com.oing.config.QuerydslConfig;
 import com.oing.domain.Family;
 import com.oing.domain.Member;
 import com.oing.domain.Post;
+import com.oing.domain.PostType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -107,8 +108,8 @@ class PostRepositoryCustomTest {
         LocalDate postDate = LocalDate.of(2023, 11, 1);
 
         // when
-        boolean exists = postRepositoryCustomImpl.existsByMemberIdAndFamilyIdAndCreatedAt(testMember1.getId(),
-                testMember1.getFamilyId(), postDate);
+        boolean exists = postRepositoryCustomImpl.existsByMemberIdAndFamilyIdAndTypeAndCreatedAt(testMember1.getId(),
+                testMember1.getFamilyId(), PostType.SURVIVAL, postDate);
 
         // then
         assertThat(exists).isTrue();
@@ -120,10 +121,60 @@ class PostRepositoryCustomTest {
         LocalDate postDate = LocalDate.of(2023, 11, 8);
 
         // when
-        boolean exists = postRepositoryCustomImpl.existsByMemberIdAndFamilyIdAndCreatedAt(testMember1.getId(),
-                testMember1.getFamilyId(), postDate);
+        boolean exists = postRepositoryCustomImpl.existsByMemberIdAndFamilyIdAndTypeAndCreatedAt(testMember1.getId(),
+                testMember1.getFamilyId(), PostType.SURVIVAL, postDate);
 
         // then
         assertThat(exists).isFalse();
+    }
+
+    @Test
+    void 미션_키_획득한_날짜에_가족의_미션_키_획득_여부를_조회한다() {
+        // given
+        String familyId = testMember1.getFamilyId();
+        LocalDate today = LocalDate.of(2023, 11, 1);
+
+        // when
+        boolean exists = postRepositoryCustomImpl.isCreatedSurvivalPostByMajority(today, familyId);
+
+        // then
+        assertThat(exists).isTrue();
+    }
+
+    @Test
+    void 미션_키_획득하지_못한_날짜에_가족의_미션_키_획득_여부를_조회한다() {
+        // given
+        String familyId = testMember1.getFamilyId();
+        LocalDate today = LocalDate.of(2024, 4, 1);
+
+        // when
+        boolean exists = postRepositoryCustomImpl.isCreatedSurvivalPostByMajority(today, familyId);
+
+        // then
+        assertThat(exists).isFalse();
+    }
+
+    @Test
+    void 해당_가족_구성원이_오늘_올린_생존신고_게시글_수를_조회한다() {
+        // given
+        String familyId = testMember1.getFamilyId();
+
+        // when
+        int todaySurvivalPostCount = postRepositoryCustomImpl.countTodaySurvivalPostsByFamilyId(familyId);
+
+        // then
+        assertThat(todaySurvivalPostCount).isEqualTo(0);
+    }
+
+    @Test
+    void 가족_구성원_수를_조회한다() {
+        // given
+        String familyId = testMember1.getFamilyId();
+
+        // when
+        int familyMemberCount = postRepositoryCustomImpl.countFamilyMembersByFamilyId(familyId);
+
+        // then
+        assertThat(familyMemberCount).isEqualTo(2);
     }
 }

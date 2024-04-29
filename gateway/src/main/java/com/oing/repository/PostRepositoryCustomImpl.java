@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZonedDateTime;
 import java.util.List;
 
 import static com.oing.domain.QMember.member;
@@ -102,17 +103,68 @@ public class PostRepositoryCustomImpl implements PostRepositoryCustom {
 
     @Override
     @Transactional
-    public boolean existsByMemberIdAndFamilyIdAndCreatedAt(String memberId, String familyId, LocalDate postDate) {
+    public boolean existsByMemberIdAndFamilyIdAndTypeAndCreatedAt(String memberId, String familyId, PostType type, LocalDate postDate) {
         return queryFactory
                 .select(post.id)
                 .from(post)
                 .where(
                         post.memberId.eq(memberId),
                         post.familyId.eq(familyId),
+                        post.type.eq(type),
                         dateExpr(post.createdAt).eq(postDate)
                 )
                 .setLockMode(LockModeType.PESSIMISTIC_WRITE)
                 .fetchFirst() != null;
+    }
+
+    @Override
+    public boolean isCreatedSurvivalPostByMajority(LocalDate date, String familyId) {
+        long totalFamilyMembers = queryFactory
+                .select(member.count())
+                .from(member)
+                .where(member.familyId.eq(familyId)
+                        .and(isActiveMember()))
+                .fetchFirst();
+
+        long survivalPostCount = queryFactory
+                .select(post.count())
+                .from(post)
+                .where(
+                        post.familyId.eq(familyId),
+                        post.type.eq(PostType.SURVIVAL),
+                        dateExpr(post.createdAt).eq(date)
+                )
+                .fetchFirst();
+
+        return survivalPostCount >= totalFamilyMembers / 2;
+    }
+
+    @Override
+    public int countFamilyMembersByFamilyId(String familyId) {
+        Long count = queryFactory
+                .select(member.id.count())
+                .from(member)
+                .where(member.familyId.eq(familyId)
+                        .and(isActiveMember()))
+                .fetchFirst();
+        return count.intValue();
+    }
+
+    @Override
+    public int countTodaySurvivalPostsByFamilyId(String familyId) {
+        LocalDate today = ZonedDateTime.now().toLocalDate();
+        Long count = queryFactory
+                .select(post.id.count())
+                .from(post)
+                .where(post.familyId.eq(familyId),
+                        post.type.eq(PostType.SURVIVAL),
+                        dateExpr(post.createdAt).eq(today))
+                .fetchFirst();
+        return count.intValue();
+    }
+
+    private BooleanExpression isActiveMember() {
+        return member.deletedAt.isNull();
     }
 
     private DateTimeTemplate<LocalDate> dateExpr(DateTimePath<LocalDateTime> localDateTime) {

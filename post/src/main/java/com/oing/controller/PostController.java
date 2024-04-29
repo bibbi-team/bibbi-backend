@@ -6,10 +6,10 @@ import com.oing.domain.Post;
 import com.oing.domain.PostType;
 import com.oing.dto.request.CreatePostRequest;
 import com.oing.dto.request.PreSignedUrlRequest;
-import com.oing.dto.response.PaginationResponse;
-import com.oing.dto.response.PostResponse;
-import com.oing.dto.response.PreSignedUrlResponse;
+import com.oing.dto.response.*;
 import com.oing.exception.AuthorizationFailedException;
+import com.oing.exception.MissionPostAccessDeniedFamilyException;
+import com.oing.exception.MissionPostCreateAccessDeniedMemberException;
 import com.oing.restapi.PostApi;
 import com.oing.service.MemberBridge;
 import com.oing.service.PostService;
@@ -41,9 +41,13 @@ public class PostController implements PostApi {
 
     @Override
     public PaginationResponse<PostResponse> fetchDailyFeeds(Integer page, Integer size, LocalDate date, String memberId,
-                                                            String sort, PostType type, String loginMemberId) {
+                                                            String sort, PostType type, String loginMemberId, boolean available) {
         String familyId = memberBridge.getFamilyIdByMemberId(loginMemberId);
-        // TODO: type이 mission이라면 사용자 검증 로직 추가
+
+        // TODO: 미션 게시물 접근 가능한 가족인지 검증하는 로직 필요 (프론트 요청으로 나중에 추가)
+        if (type == PostType.MISSION) {
+            validateMissionPostAccessFamily(available);
+        }
         PaginationDTO<Post> fetchResult = postService.searchMemberPost(
                 page, size, date, memberId, loginMemberId, familyId,
                 sort == null || sort.equalsIgnoreCase("ASC"), type
@@ -54,20 +58,29 @@ public class PostController implements PostApi {
                 .map(PostResponse::from);
     }
 
-    @Override
-    public PostResponse createPost(CreatePostRequest request, PostType type, String loginFamilyId, String loginMemberId) {
-        if (type.equals(PostType.SURVIVAL)) {
-            log.info("Member {} is trying to create post", loginMemberId);
-
-            Post savedPost = postService.createMemberPost(request, type, loginMemberId, loginFamilyId);
-            log.info("Member {} has created post {}", loginMemberId, savedPost.getId());
-            return PostResponse.from(savedPost);
-        } else {
-            // 미션 API 응답 모킹을 위해 if-else 문으로 분기 처리했습니다 (추후 삭제 예정)
-            return new PostResponse("01HGW2N7EHJVJ4CJ999RRS2E97", "01HGWOODDDFFF4CJ999RRS2E111",
-                    "MISSION", "01HGW2N7EHJVJ4CJ999RRS2E97", 3, 2, "https://asset.no5ing.kr/post/01HGW2N7EHJVJ4CJ999RRS2E97", "맛있는 밥!", ZonedDateTime.now());
+    private void validateMissionPostAccessFamily(boolean available) {
+        if (!available) {
+            throw new MissionPostAccessDeniedFamilyException();
         }
+    }
 
+    @Override
+    public PostResponse createPost(CreatePostRequest request, PostType type, String loginFamilyId, String loginMemberId, boolean available) {
+        log.info("Member {} is trying to create post", loginMemberId);
+
+        // TODO: 미션 게시물 업로드 가능한 사용자인지 검증하는 로직 필요 (프론트 요청으로 나중에 추가)
+        if (type == PostType.MISSION) {
+            validateMissionPostCreateAccessMember(available);
+        }
+        Post savedPost = postService.createMemberPost(request, type, loginMemberId, loginFamilyId);
+        log.info("Member {} has created post {}", loginMemberId, savedPost.getId());
+        return PostResponse.from(savedPost);
+    }
+
+    private void validateMissionPostCreateAccessMember(boolean available) {
+        if (!available) {
+            throw new MissionPostCreateAccessDeniedMemberException();
+        }
     }
 
     @Override
@@ -78,11 +91,57 @@ public class PostController implements PostApi {
         return PostResponse.from(memberPostProjection);
     }
 
+    @Override
+    public SurvivalUploadStatusResponse getSurvivalUploadStatus(String memberId, String loginMemberId, String loginFamilyId) {
+        validateMemberId(loginMemberId, memberId);
+
+        if (postService.existsByMemberIdAndFamilyIdAndTypeAndCreatedAt(memberId, loginFamilyId, PostType.SURVIVAL, LocalDate.now())) {
+            return new SurvivalUploadStatusResponse(true);
+        }
+        return new SurvivalUploadStatusResponse(false);
+    }
+
+    @Override
+    public MissionUploadStatusResponse getMissionUploadStatus(String memberId, String loginMemberId, String loginFamilyId) {
+        validateMemberId(loginMemberId, memberId);
+
+        if (postService.existsByMemberIdAndFamilyIdAndTypeAndCreatedAt(memberId, loginFamilyId, PostType.MISSION, LocalDate.now())) {
+            return new MissionUploadStatusResponse(true);
+        }
+        return new MissionUploadStatusResponse(false);
+    }
+
+    @Override
+    public MissionAvailableStatusResponse getMissionAvailableStatus(String memberId, String loginMemberId, String loginFamilyId) {
+        validateMemberId(loginMemberId, memberId);
+        LocalDate today = ZonedDateTime.now().toLocalDate();
+
+        if (postService.isCreatedSurvivalPostByMajority(today, loginFamilyId)) {
+            return new MissionAvailableStatusResponse(true);
+        }
+        return new MissionAvailableStatusResponse(false);
+    }
+
+    @Override
+    public RemainingSurvivalPostCountResponse getRemainingSurvivalPostCount(String memberId, String loginMemberId, String loginFamilyId) {
+        validateMemberId(loginMemberId, memberId);
+
+        int remainingSurvivalPostCount = postService.calculateRemainingSurvivalPostCountUntilMissionUnlocked(loginFamilyId);
+        return new RemainingSurvivalPostCountResponse(remainingSurvivalPostCount);
+    }
+
     private void validateFamilyMember(String loginMemberId, String postId) {
         String postFamilyId = postService.getMemberPostById(postId).getFamilyId();
         String loginFamilyId = memberBridge.getFamilyIdByMemberId(loginMemberId);
         if (!postFamilyId.equals(loginFamilyId)) {
             log.warn("Unauthorized access attempt: Member {} is attempting to access post {}", loginMemberId, postId);
+            throw new AuthorizationFailedException();
+        }
+    }
+
+    private void validateMemberId(String loginMemberId, String memberId) {
+        if (!loginMemberId.equals(memberId)) {
+            log.warn("Unauthorized access attempt: Member {} is attempting to access post", loginMemberId);
             throw new AuthorizationFailedException();
         }
     }
